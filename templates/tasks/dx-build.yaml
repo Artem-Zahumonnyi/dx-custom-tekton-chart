@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: dx-build
+  annotations:
+    tekton.dev/categories: Build Tools
+    tekton.dev/tags: build-tool
+spec:
+  description: >-
+    This Task is dx-build task to build react projects.
+  params:
+    - name: EXTRA_COMMANDS
+      type: string
+      description: Extra commands
+      default: ""
+      type: string
+    - name: BASE_IMAGE
+      description: "Base image"
+      default: "node:16.20.2-bullseye"
+      type: string
+  workspaces:
+    - name: source
+  steps:
+    - name: build
+      image: $(params.BASE_IMAGE)
+      workingDir: $(workspaces.source.path)
+      script: |
+        set -ex
+        $(params.EXTRA_COMMANDS)
+{{- include "resources" . | nindent 6 }}

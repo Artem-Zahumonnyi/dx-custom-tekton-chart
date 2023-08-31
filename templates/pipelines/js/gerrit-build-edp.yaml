@@ -1,0 +1,131 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: gerrit-npm-dx-other-app-build-edp
+  labels:
+    {{- include "edp-tekton.labels" $ | nindent 4 }}
+spec:
+  workspaces:
+    - name: shared-workspace
+    - name: ssh-creds
+  params:
+    - name: pipelineUrl
+      default: https://tekton-{{ $.Release.Namespace }}.{{ $.Values.global.dnsWildCard }}/#/namespaces/$(context.pipelineRun.namespace)/pipelineruns/$(context.pipelineRun.name)
+      type: string
+    - name: git-source-url
+      default: "https://github.com/epmd-edp/javascript-npm-react"
+      description: git url to clone
+      type: string
+    - name: git-source-revision
+      description: 'git revision to checkout (branch, tag, sha, ref)'
+      default: "edp"
+      type: string
+    - name: CODEBASE_NAME
+      default: 'react-npm-edp-version'
+      description: "Project name"
+      type: string
+    - name: CODEBASEBRANCH_NAME
+      description: "Codebasebranch name"
+      type: string
+    - name: image
+      default: 'node:16.20.2-bullseye'
+      description: "npm image version"
+      type: string
+    - name: changeNumber
+      description: Change number from Merge Request
+    - name: patchsetNumber
+      description: Patchset number from Merge Request
+    - name: TICKET_NAME_PATTERN
+      description: "Ticket name pattern"
+      default: ""
+    - name: COMMIT_MESSAGE_PATTERN
+      description: "Pattern to validate a commit message"
+      default: ""
+    - name: COMMIT_MESSAGE
+      description: "Commit message"
+      default: ""
+    - name: JIRA_ISSUE_METADATA_PAYLOAD
+      description: "Jira Payload"
+      default: ""
+    - name: JIRA_SERVER
+      description: "Jira server name"
+      default: ""
+  tasks:
+
+{{- include "gerrit-build-start" $ | nindent 4 }}
+
+    - name: get-version
+      taskRef:
+        kind: Task
+        name: get-version-edp
+      runAfter:
+        - init-values
+      params:
+        - name: CODEBASEBRANCH_NAME
+          value: $(params.CODEBASEBRANCH_NAME)
+
+    - name: update-build-number
+      taskRef:
+        kind: Task
+        name: update-build-number-npm
+      runAfter:
+        - get-version
+      params:
+        - name: BASE_IMAGE
+          value: $(params.image)
+        - name: BRANCH_VERSION
+          value: $(tasks.get-version.results.BRANCH_VERSION)
+        - name: BUILD_ID
+          value: $(tasks.get-version.results.BUILD_ID)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: build
+      taskRef:
+        kind: Task
+        name: dx-build
+      runAfter:
+        - update-build-number
+      params:
+        - name: BASE_IMAGE
+          value: $(params.image)
+        - name: EXTRA_COMMANDS
+          value: |
+            make build-all
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: create-ecr-repository
+      taskRef:
+        kind: Task
+        name: create-ecr-repository
+      runAfter:
+        - build
+      params:
+        - name: REPO_NAME
+          value: "$(tasks.init-values.results.TENANT_NAME)/$(params.CODEBASE_NAME)"
+
+    - name: kaniko-build
+      taskRef:
+        kind: Task
+        name: kaniko
+      runAfter:
+        - create-ecr-repository
+      params:
+        - name: IMAGE
+          value: "$(tasks.init-values.results.DOCKER_REGISTRY_HOST)/$(tasks.init-values.results.TENANT_NAME)/$(params.CODEBASE_NAME):$(tasks.get-version.results.IS_TAG)"
+        - name: IMAGE_TAR
+          value: "$(params.CODEBASE_NAME)_$(tasks.get-version.results.IS_TAG)"
+        - name: KANIKO_CACHE_REPO
+          value: "$(tasks.init-values.results.DOCKER_REGISTRY_HOST)/kaniko-cache"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+{{ include "build-pipeline-end" . | nindent 4 }}
+
+{{ include "finally-block-edp" . | nindent 2 }}
+
+{{ include "send-to-microsoft-teams-build" . | nindent 4 }}
